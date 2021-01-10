@@ -1,6 +1,6 @@
 ![alt text][logo]
 
-SynDaver Symple Slicer
+SynDaver Symple-Slicer
 ======================
 
 Symple Slicer is a simple-to-use, web-based slicer for 3D printers,
