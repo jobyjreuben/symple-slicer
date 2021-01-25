@@ -249,8 +249,9 @@ class MaterialNotesPage {
     }
 
     static loadProfileNotes() {
-        if(ProfileManager.hasOwnProperty("metadata") && ProfileManager.metadata.hasOwnProperty("material_notes")) {
-            $("#material_notes").html(ProfileManager.metadata.material_notes);
+        const metadata = ProfileManager.getSection("metadata");
+        if(metadata && metadata.material_notes) {
+            $("#material_notes").html(metadata.material_notes);
             return true;
         }
         $("#material_notes").empty();
@@ -1256,7 +1257,8 @@ class ConfigWirelessPage {
         if(isDesktop) {
             if(await MonitorWirelessPage.isPrinterBusy()) {
                 if(confirm("The printer is busy. Click OK to queue the file for printing next.")) {
-                    files.unshift(SynDaverWiFi.fileFromStr("printjob.gco", ProfileManager.scripts.next_print_gcode || ""));
+                    const scripts = ProfileManager.getSection("scripts");
+                    files.unshift(SynDaverWiFi.fileFromStr("printjob.gco", scripts.next_print_gcode || ""));
                 } else {
                     return;
                 }
@@ -1380,7 +1382,7 @@ class ConfigWirelessPage {
 class MonitorWirelessPage {
     static init(s) {
         s.page(     null,                                            {id: "page_monitor_wifi"});
-        s.text(     "Printer status:",                               {id: "wifi_status"});
+        s.text(     "Printer state:",                                {id: "wifi_state"});
         s.number(   "Signal strength:",                              {id: "wifi_strength", units: "dBm"});
         s.separator(                                                 {type: "br"});
         s.progress( "Print progress:",                               {id: "wifi_progress", value: 0});
@@ -1410,7 +1412,7 @@ class MonitorWirelessPage {
         const printer_addr = settings.get("printer_addr");
         if(printer_addr.length == 0) return false;
         const result = await fetchJSON('http://' + printer_addr + "/status");
-        return result.status == "printing" ||  result.status == "paused";
+        return result.state == "printing" ||  result.state == "paused";
     }
 
     static async checkIfPrinterIdle() {
@@ -1422,9 +1424,9 @@ class MonitorWirelessPage {
     }
 
     static async pauseResumePrint() {
-        let status = document.getElementById('wifi_status');
-        if(status.value == "printing") await MonitorWirelessPage.catchErrors(() => SynDaverWiFi.pausePrint());
-        if(status.value == "paused")   await MonitorWirelessPage.catchErrors(() => SynDaverWiFi.resumePrint());
+        let state = document.getElementById('wifi_state');
+        if(state.value == "printing") await MonitorWirelessPage.catchErrors(() => SynDaverWiFi.pausePrint());
+        if(state.value == "paused")   await MonitorWirelessPage.catchErrors(() => SynDaverWiFi.resumePrint());
     }
 
     static async stopPrint() {
@@ -1436,7 +1438,7 @@ class MonitorWirelessPage {
     static async onTimer() {
         let progress = document.getElementById('wifi_progress');
         let strength = document.getElementById('wifi_strength');
-        let status   = document.getElementById('wifi_status');
+        let state   = document.getElementById('wifi_state');
 
         function isHidden(el) {
             return (el.offsetParent === null);
@@ -1452,15 +1454,15 @@ class MonitorWirelessPage {
                 let json = await fetchJSON('http://' + printer_addr + "/status");
                 progress.value = json.progress;
                 strength.value = json.wifiRSSI;
-                status.value   = json.status;
-                const printing = json.status == "printing" || json.status == "paused";
+                state.value   = json.state;
+                const printing = json.state == "printing" || json.state == "paused";
                 settings.enable('#wifi_stop', printing);
                 settings.enable('#wifi_pause_resume', printing);
-                document.getElementById("wifi_pause_resume").innerHTML = json.status == "printing" ? "Pause" : "Resume";
+                document.getElementById("wifi_pause_resume").innerHTML = json.state == "printing" ? "Pause" : "Resume";
             } catch(e) {
                 progress.value = 0;
                 strength.value = 0;
-                status.value   = "unavailable";
+                state.value   = "unavailable";
                 settings.enable('#wifi_stop',         false);
                 settings.enable('#wifi_pause_resume', false);
             }
@@ -1493,17 +1495,25 @@ class UpdateFirmwarePage {
 
     static async onFlashWirelessClicked() {
         if(featureRequiresDesktopVersion("Updating firmware")) {
+            const wireless = ProfileManager.getSection("wireless");
+            if(!wireless) {
+                alert("The selected printer does not have wireless capabilities");
+                return;
+            }
             // An upgrade set includes the various print scripts as well as the firmware file.
             let files = [];
-            if(ProfileManager.scripts) {
-                files.push(SynDaverWiFi.fileFromStr("scripts/pause.gco",    ProfileManager.scripts.pause_print_gcode  || ""));
-                files.push(SynDaverWiFi.fileFromStr("scripts/cancel.gco",   ProfileManager.scripts.stop_print_gcode   || ""));
-                files.push(SynDaverWiFi.fileFromStr("scripts/resume.gco",   ProfileManager.scripts.resume_print_gcode || ""));
-                files.push(SynDaverWiFi.fileFromStr("scripts/badprobe.gco", ProfileManager.scripts.probe_fail_gcode   || ""));
+            if(wireless.scripts) {
+                const s = ProfileManager.getSection("scripts");
+                files.push(SynDaverWiFi.fileFromStr("scripts/pause.gco",    s.pause_print_gcode  || ""));
+                files.push(SynDaverWiFi.fileFromStr("scripts/cancel.gco",   s.stop_print_gcode   || ""));
+                files.push(SynDaverWiFi.fileFromStr("scripts/resume.gco",   s.resume_print_gcode || ""));
+                files.push(SynDaverWiFi.fileFromStr("scripts/badprobe.gco", s.probe_fail_gcode   || ""));
             }
-            files.push(await SynDaverWiFi.fileFromUrl("index.html",   'config/syndaver/machine_firmware/SynDaver_WiFi.html'));
-            files.push(await SynDaverWiFi.fileFromUrl("serial.html",  'config/syndaver/machine_firmware/SynDaver_WiFi_Serial.html'));
-            files.push(await SynDaverWiFi.fileFromUrl("firmware.bin", 'config/syndaver/machine_firmware/SynDaver_WiFi.bin')); // Must be last
+            if(wireless.uploads) {
+                for(const pair of wireless.uploads) {
+                    files.push(await SynDaverWiFi.fileFromUrl(pair[0], pair[1]));
+                }
+            }
             // Upload everything.
             try {
                 if(!await MonitorWirelessPage.checkIfPrinterIdle()) return;
